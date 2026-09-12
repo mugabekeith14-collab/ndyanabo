@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Admin — Ndyanabo</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<header class="site-head">
+  <div class="wrap">
+    <a class="brand" href="/">Ndyanabo<span class="dot">.</span></a>
+    <nav class="top"><a href="#" id="logout-link" style="display:none;">Log out</a></nav>
+  </div>
+</header>
+
+<main>
+  <div id="login-view" class="admin-box">
+    <h1>Admin login</h1>
+    <div class="field">
+      <label for="password">Password</label>
+      <input type="password" id="password" autocomplete="current-password">
+    </div>
+    <button class="primary" id="login-btn">Log in</button>
+    <p class="status-msg error" id="login-status"></p>
+  </div>
+
+  <div id="editor-view" style="display:none;">
+    <h1>New post</h1>
+    <div class="field">
+      <label for="title">Title</label>
+      <input type="text" id="title">
+    </div>
+    <div class="field">
+      <label for="category">Category</label>
+      <select id="category">
+        <option>Mobile Money</option>
+        <option>Saving</option>
+        <option>Side Hustles</option>
+        <option>Investing Basics</option>
+        <option>General</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="excerpt">Short excerpt (shows on homepage)</label>
+      <input type="text" id="excerpt">
+    </div>
+    <div class="field">
+      <label for="body">Post body — leave a blank line between paragraphs, start a line with "## " for a subheading</label>
+      <textarea id="body"></textarea>
+    </div>
+    <button class="primary" id="publish-btn">Publish post</button>
+    <p class="status-msg" id="publish-status"></p>
+
+    <h1 style="margin-top:56px;">Published posts</h1>
+    <div id="admin-post-list"><p>Loading…</p></div>
+  </div>
+</main>
+
+<script>
+const TOKEN_KEY = 'ndyanabo_admin_token';
+
+function getToken() { return localStorage.getItem(TOKEN_KEY); }
+function setToken(t) { localStorage.setItem(TOKEN_KEY, t); }
+function clearToken() { localStorage.removeItem(TOKEN_KEY); }
+
+function showEditor() {
+  document.getElementById('login-view').style.display = 'none';
+  document.getElementById('editor-view').style.display = 'block';
+  document.getElementById('logout-link').style.display = 'inline';
+  loadAdminPosts();
+}
+
+function showLogin() {
+  document.getElementById('login-view').style.display = 'block';
+  document.getElementById('editor-view').style.display = 'none';
+  document.getElementById('logout-link').style.display = 'none';
+}
+
+document.getElementById('login-btn').addEventListener('click', async () => {
+  const password = document.getElementById('password').value;
+  const statusEl = document.getElementById('login-status');
+  statusEl.textContent = '';
+  try {
+    const res = await fetch('/api/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password })
+    });
+    if (!res.ok) {
+      statusEl.textContent = 'Wrong password.';
+      return;
+    }
+    const data = await res.json();
+    setToken(data.token);
+    showEditor();
+  } catch (err) {
+    statusEl.textContent = 'Login failed — check your connection.';
+  }
+});
+
+document.getElementById('logout-link').addEventListener('click', (e) => {
+  e.preventDefault();
+  clearToken();
+  showLogin();
+});
+
+document.getElementById('publish-btn').addEventListener('click', async () => {
+  const title = document.getElementById('title').value.trim();
+  const category = document.getElementById('category').value;
+  const excerpt = document.getElementById('excerpt').value.trim();
+  const body = document.getElementById('body').value.trim();
+  const statusEl = document.getElementById('publish-status');
+  statusEl.className = 'status-msg';
+  statusEl.textContent = '';
+
+  if (!title || !body) {
+    statusEl.textContent = 'Title and body are required.';
+    statusEl.classList.add('error');
+    return;
+  }
+
+  try {
+    const res = await fetch('/api/posts', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${getToken()}`
+      },
+      body: JSON.stringify({ title, category, excerpt, body })
+    });
+    if (res.status === 401) {
+      clearToken();
+      showLogin();
+      return;
+    }
+    if (!res.ok) throw new Error('Publish failed');
+    statusEl.textContent = 'Published.';
+    statusEl.classList.add('ok');
+    document.getElementById('title').value = '';
+    document.getElementById('excerpt').value = '';
+    document.getElementById('body').value = '';
+    loadAdminPosts();
+  } catch (err) {
+    statusEl.textContent = 'Could not publish. Try again.';
+    statusEl.classList.add('error');
+  }
+});
+
+async function loadAdminPosts() {
+  const listEl = document.getElementById('admin-post-list');
+  try {
+    const res = await fetch('/api/posts');
+    const posts = await res.json();
+    if (!posts.length) {
+      listEl.innerHTML = '<p>No posts yet.</p>';
+      return;
+    }
+    listEl.innerHTML = posts.map(p => `
+      <div class="admin-list-item">
+        <span>${p.title}</span>
+        <button class="danger" data-slug="${p.slug}">Delete</button>
+      </div>
+    `).join('');
+    listEl.querySelectorAll('button.danger').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        if (!confirm(`Delete "${btn.previousElementSibling.textContent}"?`)) return;
+        const res = await fetch(`/api/posts/${btn.dataset.slug}`, {
+          method: 'DELETE',
+          headers: { 'Authorization': `Bearer ${getToken()}` }
+        });
+        if (res.status === 401) { clearToken(); showLogin(); return; }
+        loadAdminPosts();
+      });
+    });
+  } catch (err) {
+    listEl.innerHTML = '<p>Could not load posts.</p>';
+  }
+}
+
+// On load, check if we already have a token — verify it still works by trying to load posts.
+(async () => {
+  if (getToken()) {
+    showEditor();
+  } else {
+    showLogin();
+  }
+})();
+</script>
+</body>
+</html>
